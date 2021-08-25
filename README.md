@@ -19,12 +19,12 @@ Usage of ./rrdsrv:
 
 ## API
 
-### /api/v1/xport?q=$query&format=$format
+### /api/v1/xport?q=$query[&format=$format&start=$start&end=$end&step=$step]
 
 Takes a query param 'q' and runs the equivalent to:
 
 ```
-$ rrdtool xport -- $query
+$ rrdtool xport --start $start --end $end --step $step -- $query
 ```
 
 The query is split into arguments following normal shell rules.

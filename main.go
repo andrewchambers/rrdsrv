@@ -35,19 +35,7 @@ func requestError(ctx *fasthttp.RequestCtx, err error) {
 func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	qargs := ctx.QueryArgs()
 
-	wantJson := true
-
-	formatBytes := qargs.Peek("format")
-	if formatBytes != nil {
-		switch string(formatBytes) {
-		case "json":
-			wantJson = true
-		case "xml":
-			wantJson = false
-		default:
-			requestError(ctx, fmt.Errorf("invalid format"))
-		}
-	}
+	log.Printf("got xport request: %v", qargs)
 
 	var buf bytes.Buffer
 	for i, queryPart := range qargs.PeekMulti("q") {
@@ -81,8 +69,35 @@ func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	}
 
 	fullCmdArgs := []string{"xport"}
+
+	wantJson := true
+	formatBytes := qargs.Peek("format")
+	if formatBytes != nil {
+		switch string(formatBytes) {
+		case "json":
+			wantJson = true
+		case "xml":
+			wantJson = false
+		default:
+			requestError(ctx, fmt.Errorf("invalid format"))
+		}
+	}
 	if wantJson {
 		fullCmdArgs = append(fullCmdArgs, "--json")
+	}
+
+	startBytes := qargs.Peek("start")
+	stepBytes := qargs.Peek("step")
+	endBytes := qargs.Peek("end")
+
+	if len(startBytes) != 0 {
+		fullCmdArgs = append(fullCmdArgs, "--start", string(startBytes))
+	}
+	if len(endBytes) != 0 {
+		fullCmdArgs = append(fullCmdArgs, "--end", string(endBytes))
+	}
+	if len(stepBytes) != 0 {
+		fullCmdArgs = append(fullCmdArgs, "--step", string(stepBytes))
 	}
 	fullCmdArgs = append(fullCmdArgs, "--")
 	fullCmdArgs = append(fullCmdArgs, cleanedArgs...)
@@ -119,7 +134,7 @@ var indexHTML string = `
 API:
 
 <ul>
-  <li><a href="/api/v1/xport">/api/v1/xport</a></li>
+  <li><a href="/api/v1/xport">/api/v1/xport?q=$query[&amp;format=$format&amp;start=$start&amp;end=$end&amp;step=$step]</a></li>
 </ul> 
 
 Make an export query:
