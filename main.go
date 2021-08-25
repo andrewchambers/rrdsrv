@@ -23,7 +23,7 @@ func init() {
 
 var (
 	listenAddr = flag.String("listen-address", "127.0.0.1:9191", "Address to listen on for http requests.")
-	compress   = flag.Bool("compress", false, "Whether to enable transparent response compression")
+	compress   = flag.Bool("compress", false, "Enable transparent response compression.")
 )
 
 func requestError(ctx *fasthttp.RequestCtx, err error) {

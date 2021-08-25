@@ -10,7 +10,7 @@ grafana plugin.
 ```
 Usage of ./rrdsrv:
   -compress
-        Whether to enable transparent response compression
+        Enable transparent response compression.
   -listen-address string
         Address to listen on for http requests. (default "127.0.0.1:9191")
   -rrd-dir string
@@ -45,5 +45,7 @@ $ ./rrdsrv --help
 
 ## TODO
 
-- Graphing api using sandboxing (bwrap? nsjail?).
+- Sandboxing of rrdtool bwrap? nsjail?
+- Pooling of rrdtool instances using remote control.
+- Graphing api.
 - Implement grafana plugin.
