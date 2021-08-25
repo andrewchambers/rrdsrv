@@ -28,7 +28,7 @@ $ rrdtool xport -- $query
 ```
 
 The query is split into arguments following normal shell rules.
-If the query does not contain an XPORT line, then XPORT:v is implicitly added.
+If the query does not contain an XPORT directory, then XPORT:v is implicitly added.
 
 All rrd paths are relative to -rrd-dir.
 

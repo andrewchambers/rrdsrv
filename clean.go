@@ -62,7 +62,7 @@ func cleanDEF(def string, opts CleanOpts) (string, error) {
 	}
 
 	if !strings.HasSuffix(rrdPath, ".rrd") {
-		return "", fmt.Errorf("normalized rrd %q (from %q) must end in .rrd", rrdPath, def)
+		return "", fmt.Errorf("rrd path must end in .rrd (from %q)", def)
 	}
 
 	rrdPath = path.Join(opts.RRDRootPath, rrdPath)
