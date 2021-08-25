@@ -45,7 +45,7 @@ $ ./rrdsrv --help
 
 ## TODO
 
-- Sandboxing of rrdtool bwrap? nsjail?
+- Sandboxing of rrdtool... bwrap? nsjail?
 - Pooling of rrdtool instances using remote control.
 - Graphing api.
 - Implement grafana plugin.
