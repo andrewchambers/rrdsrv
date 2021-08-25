@@ -19,6 +19,10 @@ Usage of ./rrdsrv:
 
 ## API
 
+### /api/v1/ping
+
+Returns the json encoded string "pong"
+
 ### /api/v1/xport?q=$query[&format=$format&start=$start&end=$end&step=$step]
 
 Takes a query param 'q' and runs the equivalent to:
@@ -45,6 +49,7 @@ $ ./rrdsrv --help
 
 ## TODO
 
+- Basic-auth.
 - Sandboxing of rrdtool... bwrap? nsjail?
 - Pooling of rrdtool instances using remote control.
 - Graphing api.

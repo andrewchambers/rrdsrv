@@ -9,7 +9,6 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttprouter"
@@ -27,7 +26,7 @@ var (
 )
 
 func requestError(ctx *fasthttp.RequestCtx, err error) {
-	fmt.Fprintf(ctx, "invalid query: %s", err)
+	fmt.Fprintf(ctx, "%s", err)
 	ctx.SetStatusCode(400)
 	ctx.SetContentType("text/plain; charset=utf8")
 }
@@ -54,18 +53,6 @@ func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	if len(cleanedArgs) == 0 {
 		requestError(ctx, errors.New("empty query"))
 		return
-	}
-
-	hasXportArg := false
-	for _, a := range cleanedArgs {
-		if strings.HasPrefix(a, "XPORT:") {
-			hasXportArg = true
-			break
-		}
-	}
-	// Add an implicit export as a shorthand.
-	if !hasXportArg {
-		cleanedArgs = append(cleanedArgs, "XPORT:v")
 	}
 
 	fullCmdArgs := []string{"xport"}
@@ -124,6 +111,12 @@ func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	}
 }
 
+func pingHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
+	log.Printf("got ping from %s@%s", ctx.UserAgent(), ctx.RemoteIP())
+	io.WriteString(ctx, "\"pong\"")
+	ctx.SetContentType("text/json; charset=utf8")
+}
+
 var indexHTML string = `
 <html>
 <body>
@@ -134,6 +127,7 @@ var indexHTML string = `
 API:
 
 <ul>
+  <li><a href="/api/v1/ping">/api/v1/ping</a></li>
   <li><a href="/api/v1/xport">/api/v1/xport?q=$query[&amp;format=$format&amp;start=$start&amp;end=$end&amp;step=$step]</a></li>
 </ul> 
 
@@ -166,6 +160,7 @@ func main() {
 
 	router := fasthttprouter.New()
 	router.GET("/", indexHandler)
+	router.GET("/api/v1/ping", pingHandler)
 	router.GET("/api/v1/xport", xportHandler)
 
 	h := router.Handler
