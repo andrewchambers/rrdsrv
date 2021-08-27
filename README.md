@@ -56,7 +56,7 @@ with the following exceptions:
 To allow users to view signed graphs, without arbitrary rrd access,
 you can give them an encrypted query url.
 
-Example encrypted graph:
+Example signed and encrypted graph request:
 ```
 https://$server/api/v1/graph?e=$signed_and_encrypted
 ```

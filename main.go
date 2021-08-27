@@ -170,7 +170,6 @@ func xportHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 				switch string(v) {
 				case "json":
 					wantJson = true
-					fullCmdArgs = append(fullCmdArgs, "--json")
 				case "xml":
 					wantJson = false
 				default:
@@ -198,6 +197,10 @@ func xportHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	if err != nil {
 		requestError(ctx, fmt.Errorf("unable to perform arg splitting on xport specification: %s", err))
 		return
+	}
+
+	if wantJson {
+		fullCmdArgs = append(fullCmdArgs, "--json")
 	}
 
 	fullCmdArgs = append(fullCmdArgs, "--")
