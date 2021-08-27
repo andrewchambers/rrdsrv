@@ -357,9 +357,6 @@ func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	ctx.SetContentType(contentType)
 }
 
-//go:embed index.html
-var indexHTML string
-
 func indexHandler(ctx *fasthttp.RequestCtx) {
 	io.WriteString(ctx, indexHTML)
 	ctx.SetContentType("text/html; charset=utf8")
@@ -465,15 +462,27 @@ func logHandler(ctx *fasthttp.RequestCtx) {
 	)
 }
 
+//go:embed example/defaults.cfg
+var defaultConfig string
+
+//go:embed index.html
+var indexHTML string
+
 func main() {
 
 	var (
-		ConfigFilePath  = flag.String("config", "", "Path to the configuration file.")
-		EncryptQueryArg = flag.String("encrypt-query", "", "Print encrypted url query string and exit.")
-		DecryptQueryArg = flag.String("decrypt-query", "", "Print decrypted url query string and exit.")
+		ConfigFilePath     = flag.String("config", "", "Path to the configuration file.")
+		PrintDefaultConfig = flag.Bool("print-default-config", false, "Print the default config file and exit.")
+		EncryptQueryArg    = flag.String("encrypt-query", "", "Print encrypted url query string and exit.")
+		DecryptQueryArg    = flag.String("decrypt-query", "", "Print decrypted url query string and exit.")
 	)
 
 	flag.Parse()
+
+	if *PrintDefaultConfig {
+		fmt.Print(defaultConfig)
+		return
+	}
 
 	if *ConfigFilePath != "" {
 		cfgData, err := ioutil.ReadFile(*ConfigFilePath)

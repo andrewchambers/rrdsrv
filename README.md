@@ -53,11 +53,17 @@ with the following exceptions:
 
 ## Encrypted query params
 
-To enable applications to allow authenticated users to issue requests on behalf of unauthenticated users, rrdsrv is able to handle encrypted and signed api queries.
+To allow users to view signed graphs, without arbitrary rrd access,
+you can give them an encrypted query url.
+
+Example encrypted graph:
+```
+https://$server/api/v1/graph?e=$signed_and_encrypted
+```
 
 If `encrypted_query_secret` or `encrypted_query_secret_file` is set in the rrdsrv configuration file, then only encrypted or password authenticated queries are permitted.
 
-And encrypted query is computed as:
+An encrypted query is computed as:
 
 ```
   path="/ping|/graph|/xport"
