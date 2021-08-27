@@ -90,9 +90,10 @@ For testing you can generate encrypted query strings via:
 rrdsrv provides a few mechanisms for secure access:
 
 - We recommend you setup a security sandbox for any public access to the api server.
-  See [examples/sandbox.cfg](examples/sandbox.cfg) for one example of how to do this.
+  See [example/jail.cfg](example/jail.cfg) for one example of how to do this.
 - We strongly recommend you do not allow public access to rrdsrv except via
   encrypted/presigned queries.
+- For simple setups you can use http basic authentication, see [example/basic-auth.cfg](example/basic-auth.cfg)
 
 
 ## Building
