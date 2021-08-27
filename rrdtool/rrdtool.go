@@ -123,6 +123,12 @@ func (rc *RemoteControl) Signal(sig os.Signal) error {
 func (rc *RemoteControl) Close() error {
 	_ = rc.inp.Close()
 	_ = rc.outp.Close()
+
+	timeout := time.AfterFunc(rc.commandTimeout, func() {
+		_ = rc.Kill()
+	})
+	defer timeout.Stop()
+
 	return rc.cmd.Wait()
 }
 
@@ -236,8 +242,7 @@ func NewPool(ctx context.Context, opts PoolOptions) *RemoteControlPool {
 					l := p.rrdToolFreeList.Len()
 					if l != 0 {
 						rc := p.rrdToolFreeList.Remove(p.rrdToolFreeList.Front()).(*RemoteControl)
-						rc.Kill()
-						rc.Close()
+						_ = rc.Close()
 					}
 					p.rrdToolFreeListLock.Unlock()
 				}
@@ -272,7 +277,6 @@ func (p *RemoteControlPool) Get() (*RemoteControl, error) {
 
 	err := rc.RunCommand([]string{"pwd"})
 	if err != nil {
-		_ = rc.Kill()
 		_ = rc.Close()
 		return StartRemoteControl(p.ctx, p.opts.RemoteControlOptions)
 	}
@@ -285,7 +289,6 @@ func (p *RemoteControlPool) Recycle(rc *RemoteControl) {
 	if p.rrdToolFreeList.Len() < p.opts.MaxSize {
 		p.rrdToolFreeList.PushBack(rc)
 	} else {
-		_ = rc.Kill()
 		_ = rc.Close()
 	}
 }
@@ -299,7 +302,6 @@ func (p *RemoteControlPool) Close() {
 
 	for p.rrdToolFreeList.Len() != 0 {
 		rc := p.rrdToolFreeList.Remove(p.rrdToolFreeList.Front()).(*RemoteControl)
-		rc.Kill()
 		rc.Close()
 	}
 }

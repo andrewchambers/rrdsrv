@@ -38,9 +38,10 @@ type RRDSrvConfig struct {
 	RRDToolPoolMaxSize        uint           `toml:"rrdtool_pool_max_size"`
 	RRDToolPoolAttritionDelay ConfigDuration `toml:"rrdtool_pool_attrition_delay"`
 	Shell                     string         `toml:"shell_path"`
-	APIListenAddress          string         `toml:"api_listen_address"`
-	ApiAuthMode               string         `toml:"api_auth_mode"`
-	ApiBasicAuthHtpasswd      string         `toml:"api_basic_auth_htpasswd"`
+	ListenAddress             string         `toml:"listen_address"`
+	BasicAuthHtpasswdFile     string         `toml:"basic_auth_htpasswd_file"`
+	UrlSigningSecret          string         `toml:"url_signing_secret"`
+	UrlSigningSecretFile      string         `toml:"url_signing_secret_file"`
 }
 
 func (cfg *RRDSrvConfig) PopulateDefaults() {
@@ -48,7 +49,7 @@ func (cfg *RRDSrvConfig) PopulateDefaults() {
 		cfg.RRDToolCommand = "exec rrdtool"
 	}
 	if cfg.RRDToolPoolMaxSize == 0 {
-		cfg.RRDToolPoolMaxSize = 4
+		cfg.RRDToolPoolMaxSize = 8
 	}
 	if cfg.RRDToolTimeout.Duration == 0 {
 		cfg.RRDToolTimeout.Duration = 1 * time.Minute
@@ -56,11 +57,8 @@ func (cfg *RRDSrvConfig) PopulateDefaults() {
 	if cfg.RRDToolPoolAttritionDelay.Duration == 0 {
 		cfg.RRDToolPoolAttritionDelay.Duration = 5 * time.Minute
 	}
-	if cfg.APIListenAddress == "" {
-		cfg.APIListenAddress = "127.0.0.1:9191"
-	}
-	if cfg.ApiAuthMode == "" {
-		cfg.ApiAuthMode = "none"
+	if cfg.ListenAddress == "" {
+		cfg.ListenAddress = "127.0.0.1:9191"
 	}
 	if cfg.Shell == "" {
 		cfg.Shell = "/bin/sh"
@@ -135,14 +133,14 @@ func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	wantJson := true
 
 	var err error
-	var query string
+	var xportSpec string
 
 	qargs.VisitAll(func(k, v []byte) {
 		ks := string(k)
 		_, ok := xportFlagArgs[ks]
 		if !ok {
-			if ks == "query" {
-				query = string(v)
+			if ks == "xport" {
+				xportSpec = string(v)
 				return
 			}
 			if ks == "format" {
@@ -168,19 +166,19 @@ func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 		return
 	}
 
-	if len(query) == 0 {
-		requestError(ctx, errors.New("empty query"))
+	if len(xportSpec) == 0 {
+		requestError(ctx, errors.New("empty xport specification"))
 		return
 	}
 
-	splitQuery, err := shlex.Split(query, true)
+	splitXportSpec, err := shlex.Split(xportSpec, true)
 	if err != nil {
-		requestError(ctx, fmt.Errorf("unable to perform arg splitting on query: %s", err))
+		requestError(ctx, fmt.Errorf("unable to perform arg splitting on xport specification: %s", err))
 		return
 	}
 
 	fullCmdArgs = append(fullCmdArgs, "--")
-	fullCmdArgs = append(fullCmdArgs, splitQuery...)
+	fullCmdArgs = append(fullCmdArgs, splitXportSpec...)
 
 	log.Printf("rendering with args: %v", fullCmdArgs)
 
@@ -271,15 +269,15 @@ func graphHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	fullCmdArgs := []string{"graph", "-"}
 
 	var err error
-	var query string
+	var graphSpec string
 	var imgFormat string
 
 	qargs.VisitAll(func(k, v []byte) {
 		ks := string(k)
 		wantArg, ok := graphFlagToWantArg[ks]
 		if !ok {
-			if ks == "query" {
-				query = string(v)
+			if ks == "graph" {
+				graphSpec = string(v)
 				return
 			}
 			err = fmt.Errorf("unknown query param: %q", string(k))
@@ -303,14 +301,14 @@ func graphHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 		return
 	}
 
-	if len(query) == 0 {
-		requestError(ctx, errors.New("empty query"))
+	if len(graphSpec) == 0 {
+		requestError(ctx, errors.New("empty graph specification"))
 		return
 	}
 
-	splitQuery, err := shlex.Split(query, true)
+	splitQuery, err := shlex.Split(graphSpec, true)
 	if err != nil {
-		requestError(ctx, fmt.Errorf("unable to perform arg splitting on query: %s", err))
+		requestError(ctx, fmt.Errorf("unable to perform arg splitting on graph specification: %s", err))
 		return
 	}
 
@@ -373,9 +371,9 @@ API:
     /api/v1/xport:
     <br>
     <form action="/api/v1/xport" accept-charset="UTF-8">
-      Query:
+      Xport Specification:
       <br>
-      <textarea name="query" cols="80" rows="3"></textarea>
+      <textarea name="xport" cols="80" rows="3"></textarea>
       <br>
       Start:
       <br>
@@ -394,9 +392,9 @@ API:
     /api/v1/graph:
     <br>
     <form action="/api/v1/graph" accept-charset="UTF-8">
-      Query:
+      Graph Specification:
       <br>
-      <textarea name="query" cols="80" rows="3"></textarea>
+      <textarea name="graph" cols="80" rows="3"></textarea>
       <br>
       Start:
       <br>
@@ -423,7 +421,20 @@ func indexHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	ctx.SetContentType("text/html; charset=utf8")
 }
 
-// BasicAuth is the basic auth handler
+func wrapLogging(h fasthttp.RequestHandler) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
+		begin := time.Now()
+		h(ctx)
+		end := time.Now()
+		log.Printf("%s %s - %v - %v",
+			ctx.Method(),
+			ctx.RequestURI(),
+			ctx.Response.Header.StatusCode(),
+			end.Sub(begin),
+		)
+	}
+}
+
 func wrapBasicAuth(h fasthttp.RequestHandler, htpasswdPath string) fasthttp.RequestHandler {
 
 	passwords, err := htpasswd.New(htpasswdPath, htpasswd.DefaultSystems, nil)
@@ -433,7 +444,7 @@ func wrapBasicAuth(h fasthttp.RequestHandler, htpasswdPath string) fasthttp.Requ
 
 	var basicAuthPrefix = []byte("Basic ")
 
-	wrapped := func(ctx *fasthttp.RequestCtx) {
+	return func(ctx *fasthttp.RequestCtx) {
 		auth := ctx.Request.Header.Peek("Authorization")
 		if bytes.HasPrefix(auth, basicAuthPrefix) {
 			payload, err := base64.StdEncoding.DecodeString(string(auth[len(basicAuthPrefix):]))
@@ -449,8 +460,6 @@ func wrapBasicAuth(h fasthttp.RequestHandler, htpasswdPath string) fasthttp.Requ
 		ctx.Response.Header.Set("WWW-Authenticate", "Basic")
 		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
 	}
-
-	return wrapped
 }
 
 func main() {
@@ -494,33 +503,19 @@ func main() {
 	router.GET("/api/v1/xport", xportHandler)
 	router.GET("/api/v1/graph", graphHandler)
 
-	h := fasthttp.RequestHandler(func(ctx *fasthttp.RequestCtx) {
-		begin := time.Now()
-		router.Handler(ctx)
-		end := time.Now()
-		log.Printf("%s %s - %v - %v",
-			ctx.Method(),
-			ctx.RequestURI(),
-			ctx.Response.Header.StatusCode(),
-			end.Sub(begin),
-		)
-	})
+	h := wrapLogging(router.Handler)
 
-	if Config.ApiAuthMode == "basic" {
-		h = wrapBasicAuth(h, Config.ApiBasicAuthHtpasswd)
-	} else if Config.ApiAuthMode == "none" {
-		// nothing
-	} else {
-		log.Fatalf("unknown api_auth_mode %q, want one of \"none\",\"basic\"", Config.ApiAuthMode)
+	if Config.BasicAuthHtpasswdFile != "" {
+		h = wrapBasicAuth(h, Config.BasicAuthHtpasswdFile)
 	}
 
-	log.Printf("listening on %s", Config.APIListenAddress)
+	log.Printf("listening on %s", Config.ListenAddress)
 	srv := &fasthttp.Server{
 		Handler: h,
 		Name:    "rrdsrv",
 	}
 
-	if err := srv.ListenAndServe(Config.APIListenAddress); err != nil {
+	if err := srv.ListenAndServe(Config.ListenAddress); err != nil {
 		log.Fatalf("error in ListenAndServe: %s", err)
 	}
 }
