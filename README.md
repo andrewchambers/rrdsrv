@@ -98,8 +98,5 @@ $ ./rrdsrv --help
 
 ## TODO
 
-- Basic-auth.
 - Sandboxing of rrdtool... bwrap? nsjail?
-- Pooling of rrdtool instances using remote control.
-- Graphing api.
 - Implement grafana plugin.

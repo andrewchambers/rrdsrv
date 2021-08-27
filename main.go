@@ -50,6 +50,10 @@ type RRDSrvConfig struct {
 	encryptedQueryKey         equery.Key
 }
 
+func (cfg *RRDSrvConfig) AllowUnauthenticatedAccess() bool {
+	return len(cfg.EncryptedQuerySecret) == 0 && len(cfg.BasicAuthHtpasswdFile) == 0
+}
+
 func (cfg *RRDSrvConfig) PopulateMissing() error {
 	if cfg.RRDToolCommand == "" {
 		cfg.RRDToolCommand = "exec rrdtool"
@@ -384,7 +388,6 @@ func authHandler(ctx *fasthttp.RequestCtx) {
 	eQuery := query.Peek("e")
 	// Handle encrypted query.
 	if eQuery != nil && query.Len() == 1 {
-		log.Printf("%s", eQuery)
 		decrypted, ok := equery.DecryptBytesWithKey(&Config.encryptedQueryKey, eQuery)
 		if !ok {
 			ctx.WriteString("invalid encrypted query")
@@ -418,11 +421,6 @@ func authHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if passwords == nil {
-		routeHandler(ctx, query)
-		return
-	}
-
 	// Handle basic auth.
 	basicAuthPrefix := []byte("Basic ")
 	auth := ctx.Request.Header.Peek("Authorization")
@@ -431,14 +429,28 @@ func authHandler(ctx *fasthttp.RequestCtx) {
 		if err == nil {
 			pair := bytes.SplitN(payload, []byte(":"), 2)
 			if len(pair) == 2 &&
+				passwords != nil &&
 				passwords.Match(string(pair[0]), string(pair[1])) {
 				routeHandler(ctx, query)
 				return
 			}
 		}
 	}
-	ctx.Response.Header.Set("WWW-Authenticate", "Basic")
-	ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+
+	if Config.AllowUnauthenticatedAccess() {
+		routeHandler(ctx, query)
+		return
+	}
+
+	// All auth methods have failed at this point.
+	if passwords != nil {
+		ctx.Response.Header.Set("WWW-Authenticate", "Basic")
+		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+	} else {
+		ctx.WriteString("forbidden")
+		ctx.SetStatusCode(fasthttp.StatusForbidden)
+	}
+
 }
 
 func logHandler(ctx *fasthttp.RequestCtx) {
