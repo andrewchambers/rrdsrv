@@ -1,0 +1,94 @@
+<html>
+<body>
+<style> a { text-decoration: none }</style>
+
+<h1>rrdsrv</h1>
+
+<p>
+An api server for exporting rrd data to the web.
+</p>
+
+API:
+<br>
+
+<ul>
+  <li>
+    /api/v1/ping:
+    <br>
+    <pre>
+API test endpoint.
+    </pre>
+    <form action="/api/v1/ping" accept-charset="UTF-8">
+      <button type="submit">ping</button>
+    </form>
+  </li>
+  <li>
+    /api/v1/xport?xport=$xport[&format=$format&...$opts]
+    <br>
+    <pre>
+Runs the equivalent to:
+
+  $ rrdtool xport $opts -- $xport
+
+with the following exceptions:
+
+- Short options are disabled.
+- A new format=json|xml option replaces the --json.
+- json output is the default.
+    </pre>
+    <form action="/api/v1/xport" accept-charset="UTF-8">
+      Xport Specification:
+      <br>
+      <textarea name="xport" cols="80" rows="3"></textarea>
+      <br>
+      Start:
+      <br>
+      <input name="start" type="text" value="now-1day"></input>
+      <br>
+      End:
+      <br>
+      <input name="end" type="text" value="now"></input>
+      <br>
+      See the <a href="https://oss.oetiker.ch/rrdtool/doc/rrdxport.en.html">rrdxport manual</a> for more options, (--json is replaced with format=json|xml).
+      <br>
+      <br>
+      <button type="submit">export</button>
+    </form>
+    <li>
+
+    /api/v1/graph?graph=$graph[&...$opts]
+    <br>
+    <pre>
+Runs the equivalent to:
+
+  $ rrdtool xport $opts -- $graph
+
+with the following exceptions:
+
+- Short options are disabled.
+- SVG output is the default.
+- Only PNG and SVG is supported in the imgformat option.
+  </pre>
+    <form action="/api/v1/graph" accept-charset="UTF-8">
+      Graph Specification:
+      <br>
+      <textarea name="graph" cols="80" rows="3"></textarea>
+      <br>
+      Start:
+      <br>
+      <input name="start" type="text" value="now-1day"></input>
+      <br>
+      End:
+      <br>
+      <input name="end" type="text" value="now"></input>
+      <br>
+      See the <a href="https://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html">rrdgraph manual</a> for more options.
+      <br>
+      <br>
+      <button type="submit">export</button>
+    </form>
+  </li>
+<ul/>
+
+</body>
+</html>

@@ -1,6 +1,6 @@
 # rrdsrv
 
-An api server that exports a secure subset of rrdtool commands over http.
+An [rrdtool](https://oss.oetiker.ch/rrdtool/) api server that exports a secure subset of rrdtool commands over http.
 
 The main motivation of this server is to act as a grafana data source for a WIP
 grafana plugin.
@@ -9,13 +9,13 @@ grafana plugin.
 
 ```
 Usage of ./rrdsrv:
-  -compress
-        Enable transparent response compression.
-  -listen-address string
-        Address to listen on for http requests. (default "127.0.0.1:9191")
-  -rrd-dir string
-        Allow queries of rrd files under this path. (default "./")
+  -config string
+        Path to configuration file
 ```
+
+## Configuration
+
+See [examples/defaults.cfg](examples/defaults.cfg) for all configuration options.
 
 ## API
 
@@ -23,21 +23,71 @@ Usage of ./rrdsrv:
 
 Returns the json encoded string "pong"
 
-### /api/v1/xport?q=$query[&format=$format&start=$start&end=$end&step=$step]
+### /api/v1/xport?xport=$xport[&format=$format&...$opts]
 
-Takes a query param 'q' and runs the equivalent to:
+Runs the equivalent to:
 
 ```
-$ rrdtool xport --start $start --end $end --step $step -- $query
+$ rrdtool xport $opts -- $xport
 ```
 
-The query is split into arguments following normal shell rules.
+with the following exceptions:
 
-All rrd paths are relative to -rrd-dir.
+- Short options are disabled.
+- A new format=json|xml option replaces the --json.
+- json output is the default.
 
-Valid format values are 'xml' and 'json' (the default).
+### /api/v1/graph?graph=$graph[&...$opts]
 
-On error the result is returned as plain text with an http error status code set.
+Runs the equivalent to:
+
+```
+$ rrdtool xport $opts -- $graph
+```
+
+with the following exceptions:
+
+- Short options are disabled.
+- SVG output is the default.
+- Only PNG and SVG is supported in the imgformat option.
+
+## Encrypted query params
+
+To enable applications to allow authenticated users to issue requests on behalf of unauthenticated users, rrdsrv is able to handle encrypted and signed api queries.
+
+If `encrypted_query_secret` or `encrypted_query_secret_file` is set in the rrdsrv configuration file, then only encrypted or password authenticated queries are permitted.
+
+And encrypted query is computed as:
+
+```
+  path="/ping|/graph|/xport"
+  expiry=$unixtime
+  query = "p=$path&x=$expiry&$params""
+  key = sha256(secret)
+  nonce = random_nonce()
+  encrypted-query = nacl_crypto_secretbox(key, nonce, msg)
+  query= "e=" || base64url(nonce || rquery);
+```
+
+For more details on secretbox authenticated encryption see:
+
+- https://nacl.cr.yp.to/secretbox.html
+
+For testing you can generate encrypted query strings via:
+
+```
+ $ rrdsrv -c config -encrypt-query "$query"
+```
+
+## Notes on security
+
+rrdsrv provides a few mechanisms for secure access:
+
+- We recommend you setup a security sandbox for any public access to the api server.
+  See [examples/sandbox.cfg](examples/sandbox.cfg) for one example of how to do this.
+- We strongly recommend you do not allow public access to rrdsrv except via
+  encrypted/presigned queries.
+
 
 ## Building
 

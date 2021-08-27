@@ -10,16 +10,21 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/alessio/shellescape"
+	"github.com/andrewchambers/rrdsrv/equery"
 	"github.com/andrewchambers/rrdsrv/rrdtool"
 	"github.com/anmitsu/go-shlex"
 	"github.com/tg123/go-htpasswd"
 	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttprouter"
+
+	_ "embed"
 )
 
 type ConfigDuration struct {
@@ -40,11 +45,12 @@ type RRDSrvConfig struct {
 	Shell                     string         `toml:"shell_path"`
 	ListenAddress             string         `toml:"listen_address"`
 	BasicAuthHtpasswdFile     string         `toml:"basic_auth_htpasswd_file"`
-	UrlSigningSecret          string         `toml:"url_signing_secret"`
-	UrlSigningSecretFile      string         `toml:"url_signing_secret_file"`
+	EncryptedQuerySecret      string         `toml:"encrypted_query_secret"`
+	EncryptedQuerySecretFile  string         `toml:"encrypted_query_secret_file"`
+	encryptedQueryKey         equery.Key
 }
 
-func (cfg *RRDSrvConfig) PopulateDefaults() {
+func (cfg *RRDSrvConfig) PopulateMissing() error {
 	if cfg.RRDToolCommand == "" {
 		cfg.RRDToolCommand = "exec rrdtool"
 	}
@@ -63,12 +69,26 @@ func (cfg *RRDSrvConfig) PopulateDefaults() {
 	if cfg.Shell == "" {
 		cfg.Shell = "/bin/sh"
 	}
+
+	if cfg.EncryptedQuerySecretFile != "" {
+		secret, err := ioutil.ReadFile(cfg.EncryptedQuerySecretFile)
+		if err != nil {
+			return fmt.Errorf("unable to load encrypted_query_secret_file: %s", err)
+		}
+		cfg.EncryptedQuerySecret = string(secret)
+	}
+
+	if cfg.EncryptedQuerySecret != "" {
+		cfg.encryptedQueryKey = equery.KeyFromSecret(cfg.EncryptedQuerySecret)
+	}
+
+	return nil
 }
 
 var (
-	RRDToolPool    *rrdtool.RemoteControlPool
-	Config         = RRDSrvConfig{}
-	ConfigFilePath = flag.String("config", "", "Path to the configuration file.")
+	RRDToolPool *rrdtool.RemoteControlPool
+	passwords   *htpasswd.File
+	Config      = RRDSrvConfig{}
 )
 
 func RunRRDToolCommand(args []string) ([]byte, error) {
@@ -115,7 +135,7 @@ func requestError(ctx *fasthttp.RequestCtx, err error) {
 	ctx.SetContentType("text/plain; charset=utf8")
 }
 
-func pingHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
+func pingHandler(ctx *fasthttp.RequestCtx) {
 	io.WriteString(ctx, "\"pong\"")
 	ctx.SetContentType("text/json; charset=utf8")
 }
@@ -127,15 +147,14 @@ var xportFlagArgs = map[string]struct{}{
 	"maxrows": struct{}{},
 }
 
-func xportHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
-	qargs := ctx.QueryArgs()
+func xportHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	fullCmdArgs := []string{"xport"}
 	wantJson := true
 
 	var err error
 	var xportSpec string
 
-	qargs.VisitAll(func(k, v []byte) {
+	query.VisitAll(func(k, v []byte) {
 		ks := string(k)
 		_, ok := xportFlagArgs[ks]
 		if !ok {
@@ -264,15 +283,14 @@ var imgFormatToContentType = map[string]string{
 	"SVG": "image/svg+xml",
 }
 
-func graphHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
-	qargs := ctx.QueryArgs()
+func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	fullCmdArgs := []string{"graph", "-"}
 
 	var err error
 	var graphSpec string
 	var imgFormat string
 
-	qargs.VisitAll(func(k, v []byte) {
+	query.VisitAll(func(k, v []byte) {
 		ks := string(k)
 		wantArg, ok := graphFlagToWantArg[ks]
 		if !ok {
@@ -335,134 +353,113 @@ func graphHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
 	ctx.SetContentType(contentType)
 }
 
-var indexHTML string = `
-<html>
-<body>
-<style> a { text-decoration: none }</style>
+//go:embed index.html
+var indexHTML string
 
-<h1>rrdsrv</h1>
-
-<p>
-An api server for exporting rrd data to the web.
-</p>
-
-Notes:
-<ul>
-  <li>
-    Long form command line options are mapped directly to uri query parameters.
-  </li>
-  <li>
-    Options that take no argument should be specified as 'foo=on' in the uri.
-  </li>
-</ul>
-
-API:
-<br>
-
-<ul>
-  <li>
-    /api/v1/ping:
-    <br>
-    <form action="/api/v1/ping" accept-charset="UTF-8">
-      <button type="submit">ping</button>
-    </form>
-  </li>
-  <li>
-    /api/v1/xport:
-    <br>
-    <form action="/api/v1/xport" accept-charset="UTF-8">
-      Xport Specification:
-      <br>
-      <textarea name="xport" cols="80" rows="3"></textarea>
-      <br>
-      Start:
-      <br>
-      <input name="start" type="text" value="now-1day"></input>
-      <br>
-      End:
-      <br>
-      <input name="end" type="text" value="now"></input>
-      <br>
-      See the <a href="https://oss.oetiker.ch/rrdtool/doc/rrdxport.en.html">rrdxport manual</a> for more options, (--json is replaced with format=json|xml).
-      <br>
-      <br>
-      <button type="submit">export</button>
-    </form>
-    <li>
-    /api/v1/graph:
-    <br>
-    <form action="/api/v1/graph" accept-charset="UTF-8">
-      Graph Specification:
-      <br>
-      <textarea name="graph" cols="80" rows="3"></textarea>
-      <br>
-      Start:
-      <br>
-      <input name="start" type="text" value="now-1day"></input>
-      <br>
-      End:
-      <br>
-      <input name="end" type="text" value="now"></input>
-      <br>
-      See the <a href="https://oss.oetiker.ch/rrdtool/doc/rrdgraph.en.html">rrdgraph manual</a> for more options.
-      <br>
-      <br>
-      <button type="submit">export</button>
-    </form>
-  </li>
-<ul/>
-
-</body>
-</html>
-`
-
-func indexHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) {
+func indexHandler(ctx *fasthttp.RequestCtx) {
 	io.WriteString(ctx, indexHTML)
 	ctx.SetContentType("text/html; charset=utf8")
 }
 
-func wrapLogging(h fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		begin := time.Now()
-		h(ctx)
-		end := time.Now()
-		log.Printf("%s %s - %v - %v",
-			ctx.Method(),
-			ctx.RequestURI(),
-			ctx.Response.Header.StatusCode(),
-			end.Sub(begin),
-		)
+func routeHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
+	p := ctx.Path()
+	// priority order
+	if bytes.Equal(p, []byte("/api/v1/xport")) {
+		xportHandler(ctx, query)
+	} else if bytes.Equal(p, []byte("/api/v1/graph")) {
+		graphHandler(ctx, query)
+	} else if bytes.Equal(p, []byte("/api/v1/ping")) {
+		pingHandler(ctx)
+	} else if bytes.Equal(p, []byte("/")) {
+		indexHandler(ctx)
+	} else {
+		ctx.WriteString("404")
+		ctx.SetStatusCode(404)
 	}
 }
 
-func wrapBasicAuth(h fasthttp.RequestHandler, htpasswdPath string) fasthttp.RequestHandler {
+func authHandler(ctx *fasthttp.RequestCtx) {
 
-	passwords, err := htpasswd.New(htpasswdPath, htpasswd.DefaultSystems, nil)
-	if err != nil {
-		log.Fatalf("error loading basic auth passwords from %q: %s", htpasswdPath, err)
-	}
+	query := ctx.QueryArgs()
+	eQuery := query.Peek("e")
+	// Handle encrypted query.
+	if eQuery != nil && query.Len() == 1 {
+		log.Printf("%s", eQuery)
+		decrypted, ok := equery.DecryptBytesWithKey(&Config.encryptedQueryKey, eQuery)
+		if !ok {
+			ctx.WriteString("invalid encrypted query")
+			ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+			return
+		}
+		decryptedQuery := fasthttp.AcquireArgs()
+		defer fasthttp.ReleaseArgs(decryptedQuery)
 
-	var basicAuthPrefix = []byte("Basic ")
+		decryptedQuery.ParseBytes(decrypted)
 
-	return func(ctx *fasthttp.RequestCtx) {
-		auth := ctx.Request.Header.Peek("Authorization")
-		if bytes.HasPrefix(auth, basicAuthPrefix) {
-			payload, err := base64.StdEncoding.DecodeString(string(auth[len(basicAuthPrefix):]))
-			if err == nil {
-				pair := bytes.SplitN(payload, []byte(":"), 2)
-				if len(pair) == 2 &&
-					passwords.Match(string(pair[0]), string(pair[1])) {
-					h(ctx)
-					return
-				}
+		expiryStr := string(decryptedQuery.Peek("x"))
+		if expiryStr != "" {
+			expiry, err := strconv.ParseInt(expiryStr, 10, 64)
+			if err != nil || time.Now().Unix() > expiry {
+				ctx.WriteString("encrypted query has expired")
+				ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+				return
 			}
 		}
-		ctx.Response.Header.Set("WWW-Authenticate", "Basic")
-		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+
+		if !bytes.HasSuffix(ctx.Path(), decryptedQuery.Peek("p")) {
+			ctx.WriteString("encrypted query is for different endpoint")
+			ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+			return
+		}
+
+		decryptedQuery.Del("x")
+		decryptedQuery.Del("p")
+		routeHandler(ctx, decryptedQuery)
+		return
 	}
+
+	if passwords == nil {
+		routeHandler(ctx, query)
+		return
+	}
+
+	// Handle basic auth.
+	basicAuthPrefix := []byte("Basic ")
+	auth := ctx.Request.Header.Peek("Authorization")
+	if bytes.HasPrefix(auth, basicAuthPrefix) {
+		payload, err := base64.StdEncoding.DecodeString(string(auth[len(basicAuthPrefix):]))
+		if err == nil {
+			pair := bytes.SplitN(payload, []byte(":"), 2)
+			if len(pair) == 2 &&
+				passwords.Match(string(pair[0]), string(pair[1])) {
+				routeHandler(ctx, query)
+				return
+			}
+		}
+	}
+	ctx.Response.Header.Set("WWW-Authenticate", "Basic")
+	ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+}
+
+func logHandler(ctx *fasthttp.RequestCtx) {
+	begin := time.Now()
+	authHandler(ctx)
+	end := time.Now()
+	log.Printf("%s %s - %v - %v",
+		ctx.Method(),
+		ctx.Path(),
+		ctx.Response.Header.StatusCode(),
+		end.Sub(begin),
+	)
 }
 
 func main() {
+
+	var (
+		ConfigFilePath  = flag.String("config", "", "Path to the configuration file.")
+		EncryptQueryArg = flag.String("encrypt-query", "", "Print encrypted url query string and exit.")
+		DecryptQueryArg = flag.String("decrypt-query", "", "Print decrypted url query string and exit.")
+	)
 
 	flag.Parse()
 
@@ -471,15 +468,41 @@ func main() {
 		if err != nil {
 			log.Fatalf("unable to read %q: %s", *ConfigFilePath, err)
 		}
-
 		_, err = toml.Decode(string(cfgData), &Config)
 		if err != nil {
 			log.Fatalf("unable to parse configuration: %s", err)
 		}
-
 	}
 
-	Config.PopulateDefaults()
+	err := Config.PopulateMissing()
+	if err != nil {
+		// Don't use logging to print this initial error, it looks nicer.
+		fmt.Fprintf(os.Stderr, "unable to load config: %s", err)
+		os.Exit(1)
+	}
+
+	if *EncryptQueryArg != "" {
+		toEncrypt := *EncryptQueryArg
+		if strings.HasPrefix(toEncrypt, "?") {
+			toEncrypt = toEncrypt[1:]
+		}
+		fmt.Printf("?e=%s\n", equery.EncryptWithKey(&Config.encryptedQueryKey, toEncrypt))
+		return
+	}
+
+	if *DecryptQueryArg != "" {
+		toDecrypt := *DecryptQueryArg
+		if strings.HasPrefix(toDecrypt, "?e=") {
+			toDecrypt = toDecrypt[3:]
+		}
+		q, ok := equery.DecryptWithKey(&Config.encryptedQueryKey, toDecrypt)
+		if !ok {
+			fmt.Fprint(os.Stderr, "unable to decrypt: invalid query string or mismatched secret")
+			os.Exit(1)
+		}
+		fmt.Printf("%s\n", q)
+		return
+	}
 
 	if Config.RRDToolPoolMaxSize != 0 {
 		RRDToolPool = rrdtool.NewPool(context.Background(), rrdtool.PoolOptions{
@@ -497,21 +520,17 @@ func main() {
 		RRDToolPool.Recycle(rc)
 	}
 
-	router := fasthttprouter.New()
-	router.GET("/", indexHandler)
-	router.GET("/api/v1/ping", pingHandler)
-	router.GET("/api/v1/xport", xportHandler)
-	router.GET("/api/v1/graph", graphHandler)
-
-	h := wrapLogging(router.Handler)
-
 	if Config.BasicAuthHtpasswdFile != "" {
-		h = wrapBasicAuth(h, Config.BasicAuthHtpasswdFile)
+		pwds, err := htpasswd.New(Config.BasicAuthHtpasswdFile, htpasswd.DefaultSystems, nil)
+		if err != nil {
+			log.Fatalf("error loading basic auth passwords: %s", err)
+		}
+		passwords = pwds
 	}
 
 	log.Printf("listening on %s", Config.ListenAddress)
 	srv := &fasthttp.Server{
-		Handler: h,
+		Handler: logHandler,
 		Name:    "rrdsrv",
 	}
 
