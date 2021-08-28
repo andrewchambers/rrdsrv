@@ -180,7 +180,7 @@ func xportHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 			err = fmt.Errorf("unknown query param: %q", string(k))
 			return
 		}
-		fullCmdArgs = append(fullCmdArgs, "--"+ks, string(v))
+		fullCmdArgs = append(fullCmdArgs, fmt.Sprintf("--%s=%s", ks, string(v)))
 	})
 
 	if err != nil {
@@ -314,6 +314,7 @@ func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 				imgFormat = vs
 				return
 			}
+			fullCmdArgs = append(fullCmdArgs, fmt.Sprintf("--%s=%s", ks, vs))
 		} else {
 			if bytes.Equal(v, []byte("on")) {
 				fullCmdArgs = append(fullCmdArgs, "--"+ks)
@@ -345,7 +346,7 @@ func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 		requestError(ctx, fmt.Errorf("graph api does not support the %q format", imgFormat))
 		return
 	}
-	fullCmdArgs = append(fullCmdArgs, "--imgformat", imgFormat)
+	fullCmdArgs = append(fullCmdArgs, "--imgformat="+imgFormat)
 	fullCmdArgs = append(fullCmdArgs, "--")
 	fullCmdArgs = append(fullCmdArgs, splitQuery...)
 
