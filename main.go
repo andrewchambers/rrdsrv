@@ -206,7 +206,7 @@ func xportHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	fullCmdArgs = append(fullCmdArgs, "--")
 	fullCmdArgs = append(fullCmdArgs, splitXportSpec...)
 
-	log.Printf("rendering with args: %v", fullCmdArgs)
+	log.Printf("id=%d rendering with args: %v", ctx.ID(), fullCmdArgs)
 
 	var out []byte
 	if Config.RRDToolPoolMaxSize != 0 {
@@ -350,7 +350,7 @@ func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	fullCmdArgs = append(fullCmdArgs, "--")
 	fullCmdArgs = append(fullCmdArgs, splitQuery...)
 
-	log.Printf("rendering with args: %v", fullCmdArgs)
+	log.Printf("id=%d rendering with args: %v", ctx.ID(), fullCmdArgs)
 
 	out, err := RunRRDToolCommand(fullCmdArgs)
 	if err != nil {
@@ -383,7 +383,16 @@ func routeHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	}
 }
 
-func authHandler(ctx *fasthttp.RequestCtx) {
+func mainHandler(ctx *fasthttp.RequestCtx) {
+
+	ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
+	ctx.Response.Header.Set("Access-Control-Allow-Methods", "*")
+	ctx.Response.Header.Set("Access-Control-Allow-Headers", "*")
+	ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
+
+	if bytes.Equal(ctx.Method(), []byte("OPTIONS")) {
+		return
+	}
 
 	query := ctx.QueryArgs()
 	eQuery := query.Peek("e")
@@ -456,9 +465,10 @@ func authHandler(ctx *fasthttp.RequestCtx) {
 
 func logHandler(ctx *fasthttp.RequestCtx) {
 	begin := time.Now()
-	authHandler(ctx)
+	mainHandler(ctx)
 	end := time.Now()
-	log.Printf("%s %s - %v - %v",
+	log.Printf("id=%d method=%s path=%s status=%v duration=%v",
+		ctx.ID(),
 		ctx.Method(),
 		ctx.Path(),
 		ctx.Response.Header.StatusCode(),
