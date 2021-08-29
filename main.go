@@ -18,7 +18,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/alessio/shellescape"
-	"github.com/andrewchambers/rrdsrv/equery"
+	"github.com/andrewchambers/rrdsrv/querysign"
 	"github.com/andrewchambers/rrdsrv/rrdtool"
 	"github.com/anmitsu/go-shlex"
 	"github.com/tg123/go-htpasswd"
@@ -45,13 +45,13 @@ type RRDSrvConfig struct {
 	Shell                     string         `toml:"shell_path"`
 	ListenAddress             string         `toml:"listen_address"`
 	BasicAuthHtpasswdFile     string         `toml:"basic_auth_htpasswd_file"`
-	EncryptedQuerySecret      string         `toml:"encrypted_query_secret"`
-	EncryptedQuerySecretFile  string         `toml:"encrypted_query_secret_file"`
-	encryptedQueryKey         equery.Key
+	SignedQuerySecret         string         `toml:"signed_query_secret"`
+	SignedQuerySecretFile     string         `toml:"signed_query_secret_file"`
+	signedQuerySecretBytes    []byte
 }
 
 func (cfg *RRDSrvConfig) AllowUnauthenticatedAccess() bool {
-	return len(cfg.EncryptedQuerySecret) == 0 && len(cfg.BasicAuthHtpasswdFile) == 0
+	return len(cfg.signedQuerySecretBytes) == 0 && len(cfg.BasicAuthHtpasswdFile) == 0
 }
 
 func (cfg *RRDSrvConfig) PopulateMissing() error {
@@ -68,22 +68,20 @@ func (cfg *RRDSrvConfig) PopulateMissing() error {
 		cfg.RRDToolPoolAttritionDelay.Duration = 5 * time.Minute
 	}
 	if cfg.ListenAddress == "" {
-		cfg.ListenAddress = "127.0.0.1:9191"
+		cfg.ListenAddress = "localhost:9191"
 	}
 	if cfg.Shell == "" {
 		cfg.Shell = "/bin/sh"
 	}
 
-	if cfg.EncryptedQuerySecretFile != "" {
-		secret, err := ioutil.ReadFile(cfg.EncryptedQuerySecretFile)
-		if err != nil {
-			return fmt.Errorf("unable to load encrypted_query_secret_file: %s", err)
-		}
-		cfg.EncryptedQuerySecret = string(secret)
-	}
+	cfg.signedQuerySecretBytes = []byte(cfg.SignedQuerySecret)
 
-	if cfg.EncryptedQuerySecret != "" {
-		cfg.encryptedQueryKey = equery.KeyFromSecret(cfg.EncryptedQuerySecret)
+	if cfg.SignedQuerySecretFile != "" {
+		secret, err := ioutil.ReadFile(cfg.SignedQuerySecretFile)
+		if err != nil {
+			return fmt.Errorf("unable to load signed_query_secret_file: %s", err)
+		}
+		cfg.signedQuerySecretBytes = secret
 	}
 
 	return nil
@@ -390,45 +388,45 @@ func mainHandler(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Access-Control-Allow-Headers", "*")
 	ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
 
-	if bytes.Equal(ctx.Method(), []byte("OPTIONS")) {
+	// The headers are enough for options requests.
+	if ctx.IsOptions() {
 		return
 	}
 
-	query := ctx.QueryArgs()
-	eQuery := query.Peek("e")
-	// Handle encrypted query.
-	if eQuery != nil && query.Len() == 1 {
-		decrypted, ok := equery.DecryptBytesWithKey(&Config.encryptedQueryKey, eQuery)
-		if !ok {
-			ctx.WriteString("invalid encrypted query")
+	var queryBytes []byte
+	var args *fasthttp.Args
+	if ctx.IsPost() {
+		args = ctx.PostArgs()
+		queryBytes = ctx.Request.Body()
+	} else {
+		args = ctx.QueryArgs()
+		queryBytes = ctx.URI().QueryString()
+	}
+
+	expiryBytes := args.Peek("x")
+	if expiryBytes != nil {
+		expiry, err := strconv.ParseInt(string(expiryBytes), 10, 64)
+		if err != nil || expiry < time.Now().Unix() {
+			ctx.WriteString("request has expired")
 			ctx.SetStatusCode(fasthttp.StatusUnauthorized)
 			return
 		}
-		decryptedQuery := fasthttp.AcquireArgs()
-		defer fasthttp.ReleaseArgs(decryptedQuery)
+		args.Del("x")
+	}
 
-		decryptedQuery.ParseBytes(decrypted)
-
-		expiryStr := string(decryptedQuery.Peek("x"))
-		if expiryStr != "" {
-			expiry, err := strconv.ParseInt(expiryStr, 10, 64)
-			if err != nil || time.Now().Unix() > expiry {
-				ctx.WriteString("encrypted query has expired")
-				ctx.SetStatusCode(fasthttp.StatusUnauthorized)
-				return
-			}
-		}
-
-		if !bytes.HasSuffix(ctx.Path(), decryptedQuery.Peek("p")) {
-			ctx.WriteString("encrypted query is for different endpoint")
+	sig := args.Peek("s")
+	if sig != nil {
+		args.Del("s")
+		if !querysign.ValidateSignedQuery(Config.signedQuerySecretBytes, ctx.Path(), queryBytes) {
+			ctx.WriteString("signature failure")
 			ctx.SetStatusCode(fasthttp.StatusUnauthorized)
 			return
 		}
-
-		decryptedQuery.Del("x")
-		decryptedQuery.Del("p")
-		routeHandler(ctx, decryptedQuery)
-		return
+		// Bypass basic auth only if a secret has been set.
+		if len(Config.signedQuerySecretBytes) != 0 {
+			routeHandler(ctx, args)
+			return
+		}
 	}
 
 	// Handle basic auth.
@@ -441,14 +439,14 @@ func mainHandler(ctx *fasthttp.RequestCtx) {
 			if len(pair) == 2 &&
 				passwords != nil &&
 				passwords.Match(string(pair[0]), string(pair[1])) {
-				routeHandler(ctx, query)
+				routeHandler(ctx, args)
 				return
 			}
 		}
 	}
 
 	if Config.AllowUnauthenticatedAccess() {
-		routeHandler(ctx, query)
+		routeHandler(ctx, args)
 		return
 	}
 
@@ -487,8 +485,7 @@ func main() {
 	var (
 		ConfigFilePath     = flag.String("config", "", "Path to the configuration file.")
 		PrintDefaultConfig = flag.Bool("print-default-config", false, "Print the default config file and exit.")
-		EncryptQueryArg    = flag.String("encrypt-query", "", "Print encrypted url query string and exit.")
-		DecryptQueryArg    = flag.String("decrypt-query", "", "Print decrypted url query string and exit.")
+		SignQuery          = flag.String("sign-query", "", "Sign a \"$path?$query\" string and print the result (useful for debugging signed requests).")
 	)
 
 	flag.Parse()
@@ -516,26 +513,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *EncryptQueryArg != "" {
-		toEncrypt := *EncryptQueryArg
-		if strings.HasPrefix(toEncrypt, "?") {
-			toEncrypt = toEncrypt[1:]
-		}
-		fmt.Printf("?e=%s\n", equery.EncryptWithKey(&Config.encryptedQueryKey, toEncrypt))
-		return
-	}
-
-	if *DecryptQueryArg != "" {
-		toDecrypt := *DecryptQueryArg
-		if strings.HasPrefix(toDecrypt, "?e=") {
-			toDecrypt = toDecrypt[3:]
-		}
-		q, ok := equery.DecryptWithKey(&Config.encryptedQueryKey, toDecrypt)
-		if !ok {
-			fmt.Fprint(os.Stderr, "unable to decrypt: invalid query string or mismatched secret")
+	if toSign := *SignQuery; toSign != "" {
+		qIdx := strings.IndexRune(toSign, '?')
+		if qIdx == -1 {
+			fmt.Fprint(os.Stderr, "can only sign queries containing '?'")
 			os.Exit(1)
 		}
-		fmt.Printf("%s\n", q)
+		signedQuery := querysign.SignQuery(
+			Config.signedQuerySecretBytes,
+			[]byte(toSign[:qIdx]),
+			[]byte(toSign[qIdx+1:]),
+		)
+		fmt.Printf("%s?%s", toSign[:qIdx], signedQuery)
 		return
 	}
 

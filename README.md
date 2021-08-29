@@ -51,38 +51,29 @@ with the following exceptions:
 - SVG output is the default.
 - Only PNG and SVG is supported in the imgformat option.
 
-## Encrypted query params
+## Signed query and post params
 
 To allow users to view signed graphs, without arbitrary rrd access,
-you can give them an encrypted query url.
+you can give them a signed query with an optional unix time for expiry.
 
 Example signed and encrypted graph request:
 ```
-https://$server/api/v1/graph?e=$signed_and_encrypted
+https://$server/api/v1/graph?foo=bar&x=$expiry&s=$SIG
 ```
 
-If `encrypted_query_secret` or `encrypted_query_secret_file` is set in the rrdsrv configuration file, then only encrypted or password authenticated queries are permitted.
+If `signed_query_secret` or `signed_query_secret_file` is set in the rrdsrv configuration file, then only signed or password authenticated queries are permitted.
 
-An encrypted query is computed as:
-
-```
-  path="/ping|/graph|/xport"
-  expiry=$unixtime
-  query = "p=$path&x=$expiry&$params""
-  key = sha256(secret)
-  nonce = random_nonce()
-  encrypted-query = nacl_crypto_secretbox(key, nonce, msg)
-  query= "e=" || base64url(nonce || rquery);
-```
-
-For more details on secretbox authenticated encryption see:
-
-- https://nacl.cr.yp.to/secretbox.html
-
-For testing you can generate encrypted query strings via:
+A signed query is computed as:
 
 ```
- $ rrdsrv -c config -encrypt-query "$query"
+path=/api/v1/ping,...
+hmac-sha256($secret, $path || '?' || $query-params)
+```
+
+For testing you can generate a signed query string via:
+
+```
+ $ rrdsrv -c your-config.cfg -sign-query "$path?$query"
 ```
 
 ## Notes on security
@@ -91,8 +82,7 @@ rrdsrv provides a few mechanisms for secure access:
 
 - We recommend you setup a security sandbox for any public access to the api server.
   See [example/jail.cfg](example/jail.cfg) for one example of how to do this.
-- We strongly recommend you do not allow public access to rrdsrv except via
-  encrypted/presigned queries.
+- We strongly recommend you do not allow public access to rrdsrv except via presigned queries.
 - For simple setups you can use http basic authentication, see [example/basic-auth.cfg](example/basic-auth.cfg)
 
 
