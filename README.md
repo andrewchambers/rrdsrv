@@ -54,7 +54,7 @@ with the following exceptions:
 
 Runs the configured list_rrds_command then extracts
 matching ds metrics from the returned rrds.
-The $path:$ds pair are then matched against the provided glob pattern.
+The $path:$ds pairs are then matched against the provided glob pattern.
 
 ## Signed query and post params
 
