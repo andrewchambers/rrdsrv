@@ -88,6 +88,25 @@ with the following exceptions:
       <button type="submit">export</button>
     </form>
   </li>
+
+    <li>
+
+    /api/v1/list_metrics?[glob=$glob]
+    <br>
+    <pre>
+Runs the configured list_rrds_command then extracts
+matching ds metrics from the returned rrds.
+The $path:$ds pair are then matched against the provided glob pattern.
+  </pre>
+    <form action="/api/v1/list_metrics" accept-charset="UTF-8">
+      Glob:
+      <br>
+      <input name="glob" type="text" value="**"></input>
+      <br>
+      <button type="submit">list</button>
+    </form>
+  </li>
+
 <ul/>
 
 </body>

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,8 +23,10 @@ import (
 	"github.com/andrewchambers/rrdsrv/querysign"
 	"github.com/andrewchambers/rrdsrv/rrdtool"
 	"github.com/anmitsu/go-shlex"
+	"github.com/gobwas/glob"
 	"github.com/tg123/go-htpasswd"
 	"github.com/valyala/fasthttp"
+	"golang.org/x/sys/unix"
 
 	_ "embed"
 )
@@ -42,6 +46,8 @@ type RRDSrvConfig struct {
 	RRDToolTimeout            ConfigDuration `toml:"rrdtool_timeout"`
 	RRDToolPoolMaxSize        uint           `toml:"rrdtool_pool_max_size"`
 	RRDToolPoolAttritionDelay ConfigDuration `toml:"rrdtool_pool_attrition_delay"`
+	ListRRDsCommand           string         `toml:"list_rrds_command"`
+	ListRRDsTimeout           ConfigDuration `toml:"list_rrds_timeout"`
 	Shell                     string         `toml:"shell_path"`
 	ListenAddress             string         `toml:"listen_address"`
 	BasicAuthHtpasswdFile     string         `toml:"basic_auth_htpasswd_file"`
@@ -66,6 +72,9 @@ func (cfg *RRDSrvConfig) PopulateMissing() error {
 	}
 	if cfg.RRDToolPoolAttritionDelay.Duration == 0 {
 		cfg.RRDToolPoolAttritionDelay.Duration = 5 * time.Minute
+	}
+	if cfg.ListRRDsTimeout.Duration == 0 {
+		cfg.ListRRDsTimeout.Duration = 1 * time.Minute
 	}
 	if cfg.ListenAddress == "" {
 		cfg.ListenAddress = "localhost:9191"
@@ -135,6 +144,13 @@ func requestError(ctx *fasthttp.RequestCtx, err error) {
 	io.WriteString(ctx, err.Error())
 	ctx.SetStatusCode(400)
 	ctx.SetContentType("text/plain; charset=utf8")
+}
+
+func serverError(ctx *fasthttp.RequestCtx, err error) {
+	io.WriteString(ctx, "internal error serving request")
+	ctx.SetStatusCode(500)
+	ctx.SetContentType("text/plain; charset=utf8")
+	log.Printf("error serving request: %s", err)
 }
 
 func pingHandler(ctx *fasthttp.RequestCtx) {
@@ -359,6 +375,128 @@ func graphHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	ctx.SetContentType(contentType)
 }
 
+func listMetricsHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
+
+	if Config.ListRRDsCommand == "" {
+		ctx.SetStatusCode(501)
+		ctx.WriteString("listing not enabled")
+		return
+	}
+
+	cmdCtx, cancel := context.WithTimeout(context.Background(), Config.ListRRDsTimeout.Duration)
+	defer cancel()
+
+	rc, err := RRDToolPool.Get()
+	if err != nil {
+		serverError(ctx, fmt.Errorf("unable to get rrdtool remote control: %s", err))
+		return
+	}
+	defer RRDToolPool.Recycle(rc)
+
+	var wantGlob bool
+	var globPattern string
+
+	query.VisitAll(func(k, v []byte) {
+		if bytes.Equal(k, []byte("glob")) {
+			globPattern = string(v)
+			wantGlob = true
+		} else {
+			err = fmt.Errorf("unknown query param: %q", string(k))
+		}
+	})
+
+	if err != nil {
+		requestError(ctx, err)
+		return
+	}
+
+	var globber glob.Glob
+
+	if wantGlob {
+		g, err := glob.Compile(globPattern)
+		if err != nil {
+			requestError(ctx, fmt.Errorf("unable to compile glob: %s", err))
+			return
+		}
+		globber = g
+	}
+
+	metrics := make([]string, 0, 64)
+
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", Config.ListRRDsCommand)
+
+	p1, p2, err := os.Pipe()
+	if err != nil {
+		serverError(ctx, fmt.Errorf("listing failed: %s", err))
+		return
+	}
+	defer p1.Close()
+	defer p2.Close()
+	cmd.Stdout = p2
+
+	err = cmd.Start()
+	if err != nil {
+		serverError(ctx, fmt.Errorf("unable to start listing command: %s", err))
+		return
+	}
+	defer cmd.Wait()
+	defer cmd.Process.Signal(unix.SIGTERM)
+
+	_ = p2.Close()
+
+	scanner := bufio.NewScanner(p1)
+
+	for scanner.Scan() {
+
+		rrdFile := string(scanner.Bytes())
+		prevMetric := ""
+		rc.OnStdout = func(l []byte) {
+			if !(len(l) > 4 && l[0] == 'd' && l[1] == 's' && l[2] == '[') {
+				return
+			}
+			end := bytes.IndexByte(l, ']')
+			if end == -1 {
+				return
+			}
+			metric := rrdFile + ":" + string(l[3:end])
+			// skip runs.
+			if metric == prevMetric {
+				return
+			}
+			prevMetric = metric
+			if !wantGlob {
+				metrics = append(metrics, metric)
+				return
+			}
+			if globber.Match(metric) {
+				metrics = append(metrics, metric)
+			}
+		}
+
+		err = rc.RunCommand([]string{"info", rrdFile})
+		if err != nil {
+			log.Printf("error running rrdtool info on %q: %s", rrdFile, err)
+			// Just continue, not much else to do.
+			continue
+		}
+	}
+
+	err = scanner.Err()
+	if err != nil {
+		serverError(ctx, fmt.Errorf("unable to reading listing command output: %s", err))
+		return
+	}
+
+	if err := cmd.Wait(); err != nil {
+		serverError(ctx, fmt.Errorf("listing command failed: %s", err))
+		return
+	}
+
+	buf, _ := json.Marshal(metrics)
+	ctx.Write(buf)
+	ctx.SetContentType("application/json; charset=utf8")
+}
+
 func indexHandler(ctx *fasthttp.RequestCtx) {
 	io.WriteString(ctx, indexHTML)
 	ctx.SetContentType("text/html; charset=utf8")
@@ -373,6 +511,8 @@ func routeHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 		graphHandler(ctx, query)
 	} else if bytes.Equal(p, []byte("/api/v1/ping")) {
 		pingHandler(ctx)
+	} else if bytes.Equal(p, []byte("/api/v1/list_metrics")) {
+		listMetricsHandler(ctx, query)
 	} else if bytes.Equal(p, []byte("/")) {
 		indexHandler(ctx)
 	} else {

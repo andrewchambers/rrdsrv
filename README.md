@@ -51,6 +51,12 @@ with the following exceptions:
 - SVG output is the default.
 - Only PNG and SVG is supported in the imgformat option.
 
+### /api/v1/list_metrics?glob=$glob
+
+Runs the configured list_rrds_command then extracts
+matching ds metrics from the returned rrds.
+The $path:$ds pair are then matched against the provided glob pattern.
+
 ## Signed query and post params
 
 To allow users to view signed graphs, without arbitrary rrd access,
