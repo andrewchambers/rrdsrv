@@ -1,9 +1,8 @@
 # rrdsrv
 
-An [rrdtool](https://oss.oetiker.ch/rrdtool/) api server that exports a secure subset of rrdtool commands over http.
+An [RRDtool](https://oss.oetiker.ch/rrdtool/) api server that exports a subset of rrdtool commands over http(s).
 
-The main motivation of this server is to act as a grafana data source for a WIP
-grafana plugin.
+Be sure to checkout the [grafana plugin](https://github.com/andrewchambers/grafana-rrd-datasource).
 
 ## Usage
 
@@ -51,7 +50,7 @@ with the following exceptions:
 - SVG output is the default.
 - Only PNG and SVG is supported in the imgformat option.
 
-### /api/v1/list_metrics?glob=$glob
+### /api/v1/list_metrics?[glob=$glob]
 
 Runs the configured list_rrds_command then extracts
 matching ds metrics from the returned rrds.
@@ -98,8 +97,3 @@ rrdsrv provides a few mechanisms for secure access:
 $ go build
 $ ./rrdsrv --help
 ```
-
-## TODO
-
-- Sandboxing of rrdtool... bwrap? nsjail?
-- Implement grafana plugin.
