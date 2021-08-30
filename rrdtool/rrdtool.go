@@ -55,12 +55,10 @@ func rrdtoolFmtArgs(buf *bytes.Buffer, args []string) error {
 }
 
 func (rc *RemoteControl) RunCommand(args []string) error {
-	if rc.commandTimeout != 0 {
-		timeout := time.AfterFunc(rc.commandTimeout, func() {
-			_ = rc.Kill()
-		})
-		defer timeout.Stop()
-	}
+	timeout := time.AfterFunc(rc.commandTimeout, func() {
+		_ = rc.Kill()
+	})
+	defer timeout.Stop()
 
 	err := rrdtoolFmtArgs(&rc.argBuf, args)
 	if err != nil {
@@ -140,6 +138,10 @@ type RemoteControlOptions struct {
 }
 
 func StartRemoteControl(ctx context.Context, opts RemoteControlOptions) (*RemoteControl, error) {
+
+	if opts.CommandTimeout == 0 {
+		opts.CommandTimeout = 30 * time.Minute
+	}
 
 	if len(opts.LaunchCommand) == 0 {
 		opts.LaunchCommand = []string{"rrdtool", "-"}
