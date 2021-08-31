@@ -413,7 +413,7 @@ func listMetricsHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 	var globber glob.Glob
 
 	if wantGlob {
-		g, err := glob.Compile(globPattern)
+		g, err := glob.Compile(globPattern, '/')
 		if err != nil {
 			requestError(ctx, fmt.Errorf("unable to compile glob: %s", err))
 			return
@@ -594,9 +594,10 @@ func mainHandler(ctx *fasthttp.RequestCtx) {
 	if passwords != nil {
 		ctx.Response.Header.Set("WWW-Authenticate", "Basic")
 		ctx.SetStatusCode(fasthttp.StatusUnauthorized)
+		ctx.WriteString("unauthorized")
 	} else {
-		ctx.WriteString("forbidden")
 		ctx.SetStatusCode(fasthttp.StatusForbidden)
+		ctx.WriteString("forbidden")
 	}
 
 }
