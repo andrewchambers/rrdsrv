@@ -4,6 +4,8 @@ An [RRDtool](https://oss.oetiker.ch/rrdtool/) api server that exports a subset o
 
 Be sure to checkout the [grafana plugin](https://github.com/andrewchambers/grafana-rrd-datasource).
 
+[Demo video](https://www.youtube.com/watch?v=BuoPcyJik38).
+
 ## Usage
 
 ```
