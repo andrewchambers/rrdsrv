@@ -637,13 +637,17 @@ func main() {
 	}
 
 	if *ConfigFilePath != "" {
-		cfgData, err := ioutil.ReadFile(*ConfigFilePath)
+		tomlData, err := toml.DecodeFile(*ConfigFilePath, &Config)
 		if err != nil {
-			log.Fatalf("unable to read %q: %s", *ConfigFilePath, err)
+			log.Fatalf("unable to read configuration: %s", err)
 		}
-		_, err = toml.Decode(string(cfgData), &Config)
-		if err != nil {
-			log.Fatalf("unable to parse configuration: %s", err)
+		hadUndecoded := false
+		for _, k := range tomlData.Undecoded() {
+			log.Printf("unknown config key: %s", k.String())
+			hadUndecoded = true
+		}
+		if hadUndecoded {
+			log.Fatalf("aborting due to invalid configuration.")
 		}
 	}
 
