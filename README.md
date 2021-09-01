@@ -65,7 +65,7 @@ you can give them a signed query with an optional unix time for expiry.
 
 Example signed and encrypted graph request:
 ```
-https://$server/api/v1/graph?foo=bar&x=$expiry&s=$SIG
+https://$server/api/v1/graph?foo=bar&x=$expiry&s=$sig
 ```
 
 If `signed_query_secret` or `signed_query_secret_file` is set in the rrdsrv configuration file, then only signed or password authenticated queries are permitted.
@@ -74,7 +74,8 @@ A signed query is computed as:
 
 ```
 path=/api/v1/ping,...
-hmac-sha256($secret, $path || '?' || $query-params)
+sig=hmac-sha256($secret, $path || "?" || $query-params || "&")
+signed=$path || "?" || $query-params || "&s=$sig"
 ```
 
 For testing you can generate a signed query string via:
