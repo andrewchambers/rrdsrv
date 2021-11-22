@@ -423,7 +423,7 @@ func listMetricsHandler(ctx *fasthttp.RequestCtx, query *fasthttp.Args) {
 
 	metrics := make([]string, 0, 64)
 
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", Config.ListRRDsCommand)
+	cmd := exec.CommandContext(cmdCtx, Config.Shell, "-c", Config.ListRRDsCommand)
 
 	p1, p2, err := os.Pipe()
 	if err != nil {
